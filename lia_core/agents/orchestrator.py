@@ -1,75 +1,102 @@
 import asyncio
-import re
+import time
 from typing import List, Dict, Any
+from pydantic import BaseModel, Field
 
-class AgentIntent:
-    def __init__(self, category: str, action: str, details: str, requires_confirmation: bool = False):
-        self.category = category
-        self.action = action
-        self.details = details
-        self.requires_confirmation = requires_confirmation
+class AgentIntent(BaseModel):
+    category: str = Field(..., description="Categoría del agente asignado")
+    action: str = Field(..., description="Acción específica a ejecutar")
+    details: str = Field(..., description="Detalles contextuales extraídos")
+    priority: int = Field(default=1, description="Nivel de prioridad de ejecución (1-5)")
+    requires_confirmation: bool = Field(default=False)
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "category": self.category,
-            "action": self.action,
-            "details": self.details,
-            "requires_confirmation": self.requires_confirmation
-        }
+class OrchestrationResult(BaseModel):
+    raw_prompt: str
+    parsed_intents_count: int
+    execution_time_ms: float
+    execution_plan: List[Dict[str, Any]]
 
 class LifeOrchestrator:
     """
-    Núcleo de Orquestación de LIA:
-    Parsea lenguaje natural compuesto y distribuye tareas a micro-agentes locales/nube.
+    Motor de Orquestación Asíncrono de LIA.
+    Procesa intenciones en paralelo y emite respuestas validadas con Pydantic.
     """
     def __init__(self):
         self.categories = ["agenda", "finanzas", "salud", "hogar_compras", "documentos"]
-
-    async def parse_and_execute(self, user_prompt: str) -> Dict[str, Any]:
-        intents = self._extract_intents(user_prompt)
-        execution_results = []
-
-        for intent in intents:
-            result = await self._route_to_agent(intent)
-            execution_results.append(result)
-
-        return {
-            "raw_prompt": user_prompt,
-            "parsed_intents_count": len(intents),
-            "execution_plan": execution_results
-        }
 
     def _extract_intents(self, text: str) -> List[AgentIntent]:
         intents = []
         text_lower = text.lower()
 
-        # Detección de intenciones de Agenda / Calendario
-        if "organíza" in text_lower or "semana" in text_lower or "agenda" in text_lower:
-            intents.append(AgentIntent("agenda", "OPTIMIZE_WEEK", "Optimizar bloques de tiempo y consolidar prioridades de la semana"))
+        if any(w in text_lower for w in ["organíza", "semana", "agenda", "reunión", "tiempo"]):
+            intents.append(AgentIntent(
+                category="agenda",
+                action="OPTIMIZE_WEEK",
+                details="Optimizar bloques de tiempo y consolidar prioridades de la semana",
+                priority=1
+            ))
 
-        # Detección de Finanzas
-        if "paga" in text_lower or "factura" in text_lower or "luz" in text_lower or "banco" in text_lower:
-            intents.append(AgentIntent("finanzas", "SCHEDULE_PAYMENT", "Programar pago de servicio público (Luz)", requires_confirmation=True))
+        if any(w in text_lower for w in ["paga", "factura", "luz", "banco", "dinero", "saldo"]):
+            intents.append(AgentIntent(
+                category="finanzas",
+                action="SCHEDULE_PAYMENT",
+                details="Programar pago de servicio público (Luz/Energía)",
+                priority=2,
+                requires_confirmation=True
+            ))
 
-        # Detección de Salud
-        if "médico" in text_lower or "cita" in text_lower or "doctor" in text_lower:
-            intents.append(AgentIntent("salud", "BOOK_APPOINTMENT", "Buscar disponibilidad y agendar cita médica"))
+        if any(w in text_lower for w in ["médico", "cita", "doctor", "salud", "examen"]):
+            intents.append(AgentIntent(
+                category="salud",
+                action="BOOK_APPOINTMENT",
+                details="Buscar disponibilidad en agenda médica y reservar cita",
+                priority=1
+            ))
 
-        # Detección de Inventario / Mercado
-        if "mercado" in text_lower or "nevera" in text_lower or "compras" in text_lower:
-            intents.append(AgentIntent("hogar_compras", "GENERATE_SMART_LIST", "Cruzar inventario de nevera con lista de compras faltantes"))
+        if any(w in text_lower for w in ["mercado", "nevera", "compras", "despensa"]):
+            intents.append(AgentIntent(
+                category="hogar_compras",
+                action="GENERATE_SMART_LIST",
+                details="Cruzar inventario de la nevera con la lista de faltantes",
+                priority=3
+            ))
 
-        # Fallback si no hay reglas explícitas coincidentes
         if not intents:
-            intents.append(AgentIntent("general", "PROCESS_NLP", f"Procesar instrucción general: '{text}'"))
+            intents.append(AgentIntent(
+                category="general",
+                action="PROCESS_NLP",
+                details=f"Procesar instrucción no estructurada: '{text}'",
+                priority=4
+            ))
 
-        return intents
+        return sorted(intents, key=lambda x: x.priority)
 
-    async def _route_to_agent(self, intent: AgentIntent) -> Dict[str, Any]:
-        await asyncio.sleep(0.1) # Simulación de ejecución asíncrona de agente
-        status = "PENDING_CONFIRMATION" if intent.requires_confirmation else "EXECUTED_SUCCESSFULLY"
+    async def _execute_agent_task(self, intent: AgentIntent) -> Dict[str, Any]:
+        start_time = time.time()
+        await asyncio.sleep(0.05)  # Simulación de latencia I/O de micro-agente
+        elapsed = round((time.time() - start_time) * 1000, 2)
+
+        status = "PENDING_USER_CONFIRMATION" if intent.requires_confirmation else "EXECUTED_SUCCESSFULLY"
         return {
-            "intent": intent.to_dict(),
+            "intent": intent.model_dump(),
             "status": status,
-            "response": f"Agente [{intent.category.upper()}] -> {intent.action}: Completo."
+            "latency_ms": elapsed,
+            "response": f"Agente [{intent.category.upper()}] completó la acción '{intent.action}'."
         }
+
+    async def parse_and_execute(self, user_prompt: str) -> OrchestrationResult:
+        start_total = time.time()
+        intents = self._extract_intents(user_prompt)
+
+        # Ejecución paralela con asyncio.gather
+        tasks = [self._execute_agent_task(intent) for intent in intents]
+        results = await asyncio.gather(*tasks)
+
+        total_time = round((time.time() - start_total) * 1000, 2)
+
+        return OrchestrationResult(
+            raw_prompt=user_prompt,
+            parsed_intents_count=len(intents),
+            execution_time_ms=total_time,
+            execution_plan=results
+        )
