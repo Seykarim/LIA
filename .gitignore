@@ -1,0 +1,17 @@
+# Python & Virtualenv
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+*.egg-info/
+
+# Secretos y Tokens de Integraciones
+.env
+*.pem
+secrets.json
+
+# Logs y bases de datos locales
+*.db
+*.sqlite3
+*.log
